@@ -155,4 +155,4 @@ do whatever you want with it
 
 ---
 
-sam (viragsam@gmail.com)
+sam (sam@virasam.eu / sam@virag.me)
