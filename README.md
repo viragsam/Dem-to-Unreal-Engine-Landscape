@@ -19,8 +19,10 @@ cd uedemtolc
 
 uv sync
 
-# optional: activate the venv if you want to mess with it directly
-You can use uv venv
+# optional: activate the venv if you want to mess with it directly. You can use
+
+uv venv
+
 or:
 source .venv/bin/activate  # linux/mac
 # or
