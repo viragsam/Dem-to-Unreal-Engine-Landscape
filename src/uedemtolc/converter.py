@@ -1,8 +1,6 @@
 """
-GLTF to UE Landscape Heightmap Converter
-
-Converts GLTF mesh files (+ .bin) to 16-bit heightmaps suitable for
-Unreal Engine Landscape import.
+converts gltf mesh files to unreal engine landscape heightmaps.
+takes a gltf + .bin and outputs 16-bit raw format that UE can read.
 """
 
 import struct
@@ -16,7 +14,7 @@ from scipy.ndimage import distance_transform_edt
 
 
 class GLTFHeightmapConverter:
-    """Convert GLTF mesh to UE Landscape heightmap."""
+    """basically does the whole gltf to heightmap thing."""
 
     def __init__(self, gltf_path: str, verbose: bool = True):
         self.gltf_path = Path(gltf_path)
@@ -26,11 +24,9 @@ class GLTFHeightmapConverter:
         if not self.gltf_path.exists():
             raise FileNotFoundError(f"GLTF file not found: {self.gltf_path}")
 
-        # Load GLTF JSON
         with open(self.gltf_path, "r") as f:
             self.gltf = json.load(f)
 
-        # Load binary buffers
         self._load_buffers()
 
     def _log(self, msg: str):
@@ -38,19 +34,17 @@ class GLTFHeightmapConverter:
             print(msg)
 
     def _load_buffers(self):
-        """Load binary buffer data from .bin files."""
+        """loads the binary buffer data. checks if it's embedded or external."""
         self.buffers = {}
         for buf_idx, buf_info in enumerate(self.gltf.get("buffers", [])):
             uri = buf_info.get("uri", "")
             byte_length = buf_info.get("byteLength", 0)
 
             if uri.startswith("data:"):
-                # Embedded base64 data
                 b64_data = uri.split(",")[1]
                 self.buffers[buf_idx] = base64.b64decode(b64_data)
                 self._log(f"  Buffer {buf_idx}: Embedded ({byte_length:,} bytes)")
             else:
-                # External file reference
                 bin_file = self.gltf_path.parent / uri
                 if not bin_file.exists():
                     raise FileNotFoundError(f"Binary file not found: {bin_file}")
@@ -60,7 +54,7 @@ class GLTFHeightmapConverter:
                 self._log(f"  Buffer {buf_idx}: {uri} ({byte_length:,} bytes)")
 
     def _get_accessor_data(self, accessor_idx: int) -> np.ndarray:
-        """Extract vertex data from accessor."""
+        """extracts vertex positions from the gltf accessor."""
         accessor = self.gltf["accessors"][accessor_idx]
         buffer_view_idx = accessor.get("bufferView")
         byte_offset = accessor.get("byteOffset", 0)
@@ -77,17 +71,15 @@ class GLTFHeightmapConverter:
         view_offset = buffer_view.get("byteOffset", 0)
         stride = buffer_view.get("byteStride", None)
 
-        # Determine format
-        if component_type == 5126:  # FLOAT
+        if component_type == 5126:
             fmt = "f"
             size = 4
-        elif component_type == 5125:  # UNSIGNED_INT
+        elif component_type == 5125:
             fmt = "I"
             size = 4
         else:
             raise ValueError(f"Unsupported componentType: {component_type}")
 
-        # Determine component count
         if accessor_type == "VEC3":
             num_components = 3
         elif accessor_type == "SCALAR":
@@ -98,7 +90,6 @@ class GLTFHeightmapConverter:
         if stride is None:
             stride = size * num_components
 
-        # Extract data
         data = []
         for i in range(count):
             pos_offset = view_offset + byte_offset + i * stride
@@ -112,7 +103,7 @@ class GLTFHeightmapConverter:
         return np.array(data)
 
     def extract_positions(self) -> Tuple[np.ndarray, dict]:
-        """Extract all vertex positions from GLTF meshes."""
+        """pulls all the vertex positions out of every mesh in the gltf."""
         self._log("Extracting vertex positions from GLTF meshes...")
 
         all_positions = []
@@ -126,7 +117,6 @@ class GLTFHeightmapConverter:
                     positions = self._get_accessor_data(pos_accessor_idx)
                     all_positions.append(positions)
 
-                    # Update bounds
                     if len(positions) > 0:
                         bounds["x_min"] = min(bounds["x_min"], positions[:, 0].min())
                         bounds["x_max"] = max(bounds["x_max"], positions[:, 0].max())
@@ -147,7 +137,7 @@ class GLTFHeightmapConverter:
         return all_verts, bounds
 
     def create_heightmap(self, positions: np.ndarray, bounds: dict, resolution: int = 4096) -> Tuple[np.ndarray, dict]:
-        """Create 16-bit heightmap from vertex positions."""
+        """creates the actual heightmap from all those vertices."""
         self._log(f"\nCreating {resolution}x{resolution} heightmap...")
 
         x_vals = positions[:, 0]
@@ -158,11 +148,9 @@ class GLTFHeightmapConverter:
         y_min, y_max = bounds["y_min"], bounds["y_max"]
         z_min, z_max = bounds["z_min"], bounds["z_max"]
 
-        # Create heightmap grid
         heightmap = np.zeros((resolution, resolution), dtype=np.float32)
         count_map = np.zeros((resolution, resolution), dtype=np.int32)
 
-        # Map vertices to grid
         for i, (x, y, z) in enumerate(positions):
             grid_x = int((x - x_min) / (x_max - x_min) * (resolution - 1)) if x_max > x_min else 0
             grid_y = int((y - y_min) / (y_max - y_min) * (resolution - 1)) if y_max > y_min else 0
@@ -176,18 +164,15 @@ class GLTFHeightmapConverter:
             if (i + 1) % max(1, len(positions) // 10) == 0:
                 self._log(f"  Mapped {i + 1:,} vertices...")
 
-        # Average overlapping pixels
         mask = count_map > 0
         heightmap[mask] /= count_map[mask]
 
-        # Fill holes with nearest neighbor
         holes = count_map == 0
         if holes.any():
             self._log("  Filling holes...")
             indices = distance_transform_edt(holes, return_distances=False, return_indices=True)
             heightmap[holes] = heightmap[tuple(indices[:, holes])]
 
-        # Normalize to 16-bit range
         heightmap_normalized = ((heightmap - z_min) / (z_max - z_min) * 65535).astype(np.uint16)
 
         metadata = {
@@ -209,18 +194,16 @@ class GLTFHeightmapConverter:
         return heightmap_normalized, metadata
 
     def save_heightmap(self, heightmap: np.ndarray, output_prefix: str):
-        """Save heightmap as RAW and PNG."""
+        """saves the heightmap as raw 16-bit and also a png preview."""
         output_path = Path(output_prefix)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Save RAW (16-bit little-endian)
         raw_file = output_path.with_suffix(".raw")
         heightmap.astype(np.uint16).tofile(raw_file)
         self._log(f"\n✓ Saved: {raw_file}")
         self._log(f"  Format: 16-bit RAW (little-endian)")
         self._log(f"  Size: {raw_file.stat().st_size / 1024 / 1024:.1f} MB")
 
-        # Save PNG preview
         png_file = output_path.with_suffix(".png")
         img_8bit = (heightmap / 65535 * 255).astype(np.uint8)
         Image.fromarray(img_8bit).save(png_file)
@@ -229,7 +212,7 @@ class GLTFHeightmapConverter:
         return raw_file, png_file
 
     def convert(self, output_prefix: str, resolution: int = 4096) -> Tuple[Path, Path]:
-        """Full conversion pipeline."""
+        """does all the steps. extract, create heightmap, save files."""
         self._log(f"Converting {self.gltf_path.name}...")
         self._log("=" * 60)
 
@@ -237,7 +220,6 @@ class GLTFHeightmapConverter:
         heightmap, metadata = self.create_heightmap(positions, bounds, resolution)
         raw_file, png_file = self.save_heightmap(heightmap, output_prefix)
 
-        # Save metadata
         metadata_file = Path(output_prefix).with_suffix(".json")
         import json
         with open(metadata_file, "w") as f:

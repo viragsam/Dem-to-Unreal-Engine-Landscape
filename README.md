@@ -1,91 +1,79 @@
-# UEDEMTOLC — GLTF to UE Landscape Heightmap Converter
+# UEDEMTOLC - GLTF to UE Landscape Converter
 
-Convert lunar DEM GLTF mesh files to Unreal Engine Landscape heightmaps (16-bit RAW format).
+converts lunar DEM GLTF meshes to unreal engine landscape heightmaps. takes a mesh with like 7 million vertices and turns it into a 16-bit grayscale image UE can read.
 
-## Purpose
+## What This Does
 
-Converts complex mesh tiles (like lunar south pole DEMs from photogrammetry/3D modeling) into UE Landscape-compatible heightmaps for terrain visualization in Unreal Engine.
+takes photogrammetry meshes (or any GLTF really) and converts them to heightmaps. useful for getting lunar terrain or whatever into unreal without it being laggy garbage.
 
-**Input:** GLTF mesh file(s) + binary data
-**Output:** 16-bit RAW heightmap + PNG preview + metadata
+input: GLTF file + .bin file
+output: .raw heightmap + .png preview so you can see what it looks like + .json with the numbers
 
-## Setup
+## Getting Started
 
-### Prerequisites
-- Python 3.10+
-- `uv` package manager ([install here](https://docs.astral.sh/uv/getting-started/installation/))
-
-### Installation
+need python 3.10 or newer and `uv`. if you don't have uv, get it here: https://docs.astral.sh/uv/
 
 ```bash
-# Clone and enter directory
 git clone https://github.com/viragsam/uedemtolc.git
 cd uedemtolc
 
-# Create virtual environment and install dependencies
 uv sync
 
-# (Optional) Activate venv for manual testing
-source .venv/bin/activate  # macOS/Linux
+# optional: activate the venv if you want to mess with it directly
+source .venv/bin/activate  # linux/mac
 # or
-.\.venv\Scripts\activate  # Windows
+.\.venv\Scripts\activate  # windows
 ```
 
-## Usage
-
-### Basic
+## Using It
 
 ```bash
 uv run uedemtolc path/to/LunarSouthPoleBlend.gltf
 ```
 
-This creates:
-- `LunarSouthPoleBlend.raw` (16-bit heightmap)
-- `LunarSouthPoleBlend.png` (preview image)
-- `LunarSouthPoleBlend.json` (metadata)
+spits out:
+- `LunarSouthPoleBlend.raw` (the actual heightmap)
+- `LunarSouthPoleBlend.png` (so you can see it)
+- `LunarSouthPoleBlend.json` (numbers and stuff)
 
-### With Options
+with options:
 
 ```bash
 uv run uedemtolc LunarSouthPoleBlend.gltf \
-  -o southpole_heightmap \
+  -o southpole \
   -r 4096 \
   -q
 ```
 
-**Options:**
-- `-o, --output PREFIX` — Output file prefix (default: input filename)
-- `-r, --resolution RES` — Heightmap resolution, power of 2 (default: 4096, range: 256-16384)
-- `-q, --quiet` — Suppress verbose output
+options:
+- `-o` or `--output` - where to save it. defaults to same name as input
+- `-r` or `--resolution` - size of the heightmap. power of 2 preferred (4096 is good). range is 256 to 16384
+- `-q` or `--quiet` - don't print all the progress stuff
 
-### Examples
+examples:
 
 ```bash
-# Convert south pole DEM to 4096x4096
+# basic
 uv run uedemtolc Soutpole/LunarSouthPoleBlend.gltf -o outputs/southpole
 
-# Convert Apollo 15 DEM to 8192x8192 (high detail)
+# bigger resolution for more detail
 uv run uedemtolc Apollo15_new/Apollo_keguyaBlend.gltf -o outputs/apollo15 -r 8192
 
-# Batch convert (shell)
+# batch if you have a bunch
 for gltf in *.gltf; do
   uv run uedemtolc "$gltf" -o outputs/"${gltf%.gltf}"
 done
 ```
 
-## Output Files
+## What You Get
 
-### `.raw` — Heightmap Data
-- **Format:** 16-bit unsigned integer, little-endian, no header
-- **Size:** `resolution × resolution × 2 bytes`
-- **Example:** 4096×4096 = 33.55 MB
-- **Import into UE:** Landscape → Import → select `.raw` file
+`.raw` file is 16-bit unsigned integers in little-endian format. no header or anything, just raw bytes. UE reads this directly as a heightmap.
 
-### `.png` — Preview
-- 8-bit grayscale visualization of the heightmap
-- For quick visual verification before UE import
+`.png` is just so you can actually see what it looks like before you import it into UE.
 
-### `.json` — Metadata
+`.json` has all the metadata like resolution, height range in meters, xy extent, etc. useful for reference.
+
+example metadata:
 ```json
 {
   "resolution": 4096,
@@ -101,132 +89,66 @@ done
 }
 ```
 
-## Unreal Engine Import
+## Importing into UE
 
-1. **Create a new Landscape actor:**
-   - In editor: Place Actor → Landscape
-   - Set desired XY size (match your heightmap extent)
+new landscape actor, place it in your level. then go to details and import the .raw file. set the resolution to match what you generated (like 4096x4096). add some materials if you want it to look less gray. enable nanite for performance.
 
-2. **Import heightmap:**
-   - Landscape Details → Import
-   - Select your `.raw` file
-   - Set resolution to match (e.g., 4096×4096)
+adjust z-scale depending on your game world. like 100 is reasonable if you want 1 UE unit per meter.
 
-3. **Configure material:**
-   - Add landscape material layers (rock, shadow, etc.)
-   - Apply Nanite for GPU-optimized rendering
+## How It Works
 
-4. **Adjust height scale:**
-   - Z-scale in landscape properties
-   - Recommended: 100 cm per meter (scale: 100)
-   - Adjust based on your desired play scale
+basically does this:
 
-## Technical Details
+1. loads the gltf json and the separate .bin file
+2. pulls out all the vertex positions from every mesh
+3. maps those vertices to a 2d grid
+4. averages overlapping vertices and fills holes
+5. scales the height values to 16-bit range (0-65535)
+6. saves as raw binary
 
-### Conversion Pipeline
+the trickier part is stitching together the 68 different mesh tiles into one coherent heightmap. fills in any gaps with nearest neighbor interpolation.
 
-1. **Extract GLTF positions**
-   - Parse GLTF JSON + binary buffer
-   - Extract all mesh vertex positions (X, Y, Z)
-
-2. **Create heightmap grid**
-   - Map vertices to 2D grid (e.g., 4096×4096)
-   - Average overlapping vertices
-   - Interpolate holes with nearest-neighbor
-
-3. **Normalize heights**
-   - Scale Z values from raw meters to 16-bit range (0–65535)
-   - Preserves relative elevation differences
-
-4. **Export**
-   - Save as binary RAW file
-   - Generate PNG preview
-   - Output metadata JSON
-
-### Why 16-bit?
-
-UE Landscapes use 16-bit heightmaps for:
-- 0–65535 precision levels
-- Good memory efficiency (~2 bytes per height value)
-- Industry standard for game terrain
+uses 16-bit because unreal does, and it's efficient enough for good detail without using tons of memory.
 
 ## Performance
 
-**Typical conversion times (on modern hardware):**
-- South Pole (68 meshes, ~6.4M vertices): ~30–60 seconds
-- Apollo 15 (larger dataset): ~2–5 minutes
-
-**Memory usage:** ~2–3 GB for largest datasets
+south pole (68 meshes, ~6.4M vertices) takes like 30-60 seconds.
+apollo 15 is bigger so more like 2-5 minutes.
+uses like 2-3 GB of ram during conversion depending on resolution.
 
 ## Troubleshooting
 
 ### "Binary file not found"
-Ensure the `.bin` file is in the same directory as the `.gltf`:
-```
-Soutpole/
-├── LunarSouthPoleBlend.gltf
-└── LunarSouthPoleBlend.bin  ← Must exist
-```
+the .bin file needs to be right next to the .gltf file. same directory.
 
-### Heightmap looks inverted/distorted
-- Check Z-axis orientation in UE landscape properties
-- Try flipping the heightmap if needed
+### Looks weird
+check the z-axis orientation. might need to flip it in UE. heightmap might be inverted depending on how your mesh was built.
 
-### Import fails in UE
-- Verify resolution is power of 2 (256, 512, 1024, 2048, 4096, 8192, etc.)
-- Check `.raw` file size matches `resolution² × 2`
-- Re-import heightmap in UE Landscape actor properties
+### Import fails
+make sure resolution is power of 2. check that .raw file size is resolution squared times 2 (like 4096 * 4096 * 2 = 33554432 bytes). try re-importing.
 
-### Out of memory during conversion
-- Reduce resolution: `-r 2048` instead of 4096
-- Process on a machine with more RAM
-- Close other memory-heavy applications
+### Out of memory
+lower the resolution with `-r 2048`. or get more ram. or close stuff.
 
-## Project Structure
+## Code Structure
 
 ```
-uedemtolc/
-├── src/uedemtolc/
-│   ├── __init__.py          # Package init
-│   ├── converter.py         # Core conversion logic
-│   └── cli.py               # Command-line interface
-├── pyproject.toml           # uv/pip configuration
-├── README.md                # This file
-└── .gitignore
+src/uedemtolc/
+├── converter.py   - the actual conversion
+├── cli.py         - command line interface
+└── __init__.py
 ```
-
-## Development
-
-### Running tests (planned)
-```bash
-uv run pytest
-```
-
-### Manual testing
-```bash
-uv run python -c "from uedemtolc.converter import GLTFHeightmapConverter; ..."
-```
-
-### Adding features
-1. Fork and create feature branch
-2. Update `src/uedemtolc/` modules
-3. Test with sample GLTF files
-4. Submit PR
-
-## License
-
-MIT (update if needed)
 
 ## References
 
-- [Unreal Engine Landscape](https://docs.unrealengine.com/en-US/BuildingWorlds/Landscape/)
-- [glTF 2.0 Specification](https://www.khronos.org/gltf/)
-- [GLTF Python Libraries](https://github.com/KhronosGroup/glTF)
+- UE Landscape docs: https://docs.unrealengine.com/en-US/BuildingWorlds/Landscape/
+- glTF spec: https://www.khronos.org/gltf/
+- general gltf stuff: https://github.com/KhronosGroup/glTF
 
-## Author
+## MIT License
 
-Sam (viragsam@gmail.com)
+do whatever you want with it
 
 ---
 
-**Questions?** Check the examples or open an issue on GitHub.
+sam (viragsam@gmail.com)

@@ -1,4 +1,4 @@
-"""Command-line interface for GLTF to UE Landscape conversion."""
+"""cli for converting gltf to ue heightmap. just wraps the converter."""
 
 import click
 from pathlib import Path
@@ -12,58 +12,53 @@ from .converter import GLTFHeightmapConverter
     "--output",
     type=click.Path(),
     default=None,
-    help="Output prefix for heightmap files (default: same as input)",
+    help="where to save the heightmap (default: same name as input)",
 )
 @click.option(
     "-r",
     "--resolution",
     type=int,
     default=4096,
-    help="Heightmap resolution (power of 2, default: 4096)",
+    help="heightmap size, needs to be power of 2 (default 4096)",
 )
-@click.option("-q", "--quiet", is_flag=True, help="Suppress verbose output")
+@click.option("-q", "--quiet", is_flag=True, help="shut up about progress")
 def main(gltf_file: str, output: str, resolution: int, quiet: bool):
-    """
-    Convert lunar DEM GLTF meshes to Unreal Engine Landscape heightmaps.
+    """converts gltf meshes to unreal engine landscape heightmaps.
 
-    GLTF_FILE: Path to GLTF file (+ accompanying .bin file must exist)
+    needs the .bin file in the same folder as the gltf.
 
-    Example:
-        uedemtolc LunarSouthPoleBlend.gltf -o southpole_heightmap -r 4096
+    example:
+        uedemtolc LunarSouthPoleBlend.gltf -o southpole -r 4096
     """
     try:
         gltf_path = Path(gltf_file)
         bin_path = gltf_path.with_suffix(".bin")
 
         if not bin_path.exists():
-            click.echo(f"Error: Binary file not found: {bin_path}", err=True)
+            click.echo(f"Error: can't find the .bin file: {bin_path}", err=True)
             raise click.Exit(1)
 
-        # Set output path
         if output is None:
             output = str(gltf_path.stem)
 
-        # Validate resolution
         if resolution < 256 or resolution > 16384:
-            click.echo("Error: Resolution must be between 256 and 16384", err=True)
+            click.echo("Error: resolution has to be between 256 and 16384", err=True)
             raise click.Exit(1)
 
-        # Check power of 2
         if (resolution & (resolution - 1)) != 0:
-            click.echo(f"Warning: {resolution} is not a power of 2. UE works best with power-of-2 resolutions.", err=True)
+            click.echo(f"Warning: {resolution} isn't a power of 2. UE likes power of 2.", err=True)
 
-        # Run conversion
         converter = GLTFHeightmapConverter(str(gltf_path), verbose=not quiet)
         raw_file, png_file = converter.convert(output, resolution=resolution)
 
-        click.echo(f"\n✓ Conversion complete!")
-        click.echo(f"  RAW: {raw_file}")
-        click.echo(f"  PNG: {png_file}")
-        click.echo(f"\nNext steps:")
-        click.echo(f"  1. Open your UE project")
-        click.echo(f"  2. Create a new Landscape actor")
-        click.echo(f"  3. Import heightmap: {raw_file.name}")
-        click.echo(f"  4. Set material layers and enable Nanite")
+        click.echo(f"\n✓ done!")
+        click.echo(f"  raw: {raw_file}")
+        click.echo(f"  png: {png_file}")
+        click.echo(f"\nwhat to do now:")
+        click.echo(f"  1. open ue")
+        click.echo(f"  2. make a landscape actor")
+        click.echo(f"  3. import the .raw file")
+        click.echo(f"  4. add materials and enable nanite")
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
